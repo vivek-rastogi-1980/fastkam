@@ -34,10 +34,27 @@ class AuthController extends Controller
      */
     public function login(Request $request): RedirectResponse
     {
-        $credentials = $request->validate([
-            'email' => ['required', 'email'],
+        if (Auth::check()) {
+            return redirect()->route('admin.services');
+        }
+
+        $loginInput = trim((string) $request->input('email'));
+        $fieldType = filter_var($loginInput, FILTER_VALIDATE_EMAIL) ? 'email' : 'phone';
+
+        $rules = [
+            'email' => ['required', 'string'],
             'password' => ['required'],
-        ]);
+        ];
+        if ($fieldType === 'email') {
+            $rules['email'] = ['required', 'email'];
+        }
+
+        $request->validate($rules);
+
+        $credentials = [
+            $fieldType => $loginInput,
+            'password' => (string) $request->input('password'),
+        ];
 
         $remember = $request->boolean('remember');
 
@@ -54,11 +71,19 @@ class AuthController extends Controller
                 ]);
             }
 
-            $user->plain_password = $credentials['password'];
-            $user->save();
-            session(['current_plain_password' => $credentials['password']]);
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'plain_password')) {
+                    $user->plain_password = $credentials['password'];
+                    $user->save();
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Could not save plain_password on login: ' . $e->getMessage());
+            }
 
-            return redirect()->intended(route('admin.services'))
+            session(['current_plain_password' => $credentials['password']]);
+            session()->forget('url.intended');
+
+            return redirect()->route('admin.services')
                 ->with('success', "Welcome back, {$user->name}!");
         }
 
@@ -218,7 +243,13 @@ class AuthController extends Controller
         }
 
         $user->password = Hash::make($request->password);
-        $user->plain_password = $request->password;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'plain_password')) {
+                $user->plain_password = $request->password;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Could not update plain_password during reset: ' . $e->getMessage());
+        }
         $user->save();
 
         DB::table('password_reset_tokens')->where('email', $request->email)->delete();

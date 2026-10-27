@@ -104,7 +104,13 @@ class DashboardController extends Controller
         /** @var User $user */
         $user = Auth::user();
         $user->password = Hash::make($request->password);
-        $user->plain_password = $request->password;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'plain_password')) {
+                $user->plain_password = $request->password;
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Could not update plain_password: ' . $e->getMessage());
+        }
         $user->save();
         session(['current_plain_password' => $request->password]);
 
@@ -214,12 +220,11 @@ class DashboardController extends Controller
         $apiSecret = 'sec_' . Str::random(40);
         $initialTokens = (float) ($validated['initial_tokens'] ?? 0.00);
 
-        $franchise = User::create([
+        $userData = [
             'name' => $validated['name'],
             'full_name' => $validated['full_name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
-            'plain_password' => $validated['password'],
             'role' => 'franchise',
             'phone' => $validated['phone'],
             'address' => $validated['address'] ?? null,
@@ -230,7 +235,17 @@ class DashboardController extends Controller
             'api_secret' => $apiSecret,
             'wallet_balance' => $initialTokens,
             'status' => 'active',
-        ]);
+        ];
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'plain_password')) {
+                $userData['plain_password'] = $validated['password'];
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Could not set plain_password on franchise creation: ' . $e->getMessage());
+        }
+
+        $franchise = User::create($userData);
 
         // When a new franchise is added, default prices for each service are applicable and assigned at creation
         $services = Service::all();
